@@ -155,7 +155,7 @@ wipeDisk() {
   fi
   echo "we got an output"
   sleeep 5
-  if ! [ -z "$EFI_PART" ]; then
+  if [ -n "$EFI_PART" ]; then
     if whiptail --title "Wipe disk" --yesno "Do you want to delete your EFI partition?\nAll the data will be lost" 0 0 3>&1 1>&2 2>&3; then
       while IFS= read -r line; do
         #wipePartitionSignature $line
@@ -324,15 +324,13 @@ installBasePackages() {
 }
 
 installAurHelper() {
-  arch-chroot /mnt /bin/bash <<EOF
-su - p0ndaa
-cd /home/"$USER"
-sudo rm -rf yay/
-git clone "$AUR_HELPER"
-cd yay/
-sudo -u p0ndaa makepkg --syncdeps --needed --noconfirm
-sudo -u p0ndaa makepkg -si PKGBUILD
-EOF
+  arch-chroot /mnt /bin/bash -c 'pacman -S fakeroot --noconfirm'
+  arch-chroot /mnt /bin/bash -c 'su - '"$USER"' -c "cd /home/'"$USER"' && sudo rm -rf yay && /usr/bin/git clone '"$AUR_HELPER"' && cd yay/ && sudo -u p0ndaa makepkg --syncdeps --needed --noconfirm && sudo -u p0ndaa makepkg -si PKGBUILD"'
+  #arch-chroot /mnt /bin/bash -c 'su - p0ndaa cd /home/'"$USER"' && sudo rm -rf yay'
+  #arch-chroot /mnt /bin/bash -c 'su - p0ndaa git clone '"$AUR_HELPER"''
+  #arch-chroot /mnt /bin/bash -c cd yay/
+  #arch-chroot /mnt /bin/bash -c 'sudo -u p0ndaa makepkg --syncdeps --needed --noconfirm'
+  #arch-chroot /mnt /bin/bash -c 'sudo -u p0ndaa makepkg -si PKGBUILD'
 }
 
 pacmanInstall(){
@@ -389,7 +387,7 @@ addUser(){
   arch-chroot /mnt /bin/bash -c 'echo '"$USER"':'"$user_pass1"' | chpasswd'
   arch-chroot /mnt /bin/bash -c "mkdir -p '"$REPO_DIR"'"
   arch-chroot /mnt /bin/bash -c "mkdir -p '"$PATH_SCRIPT"'"
-  arch-chroot /mnt /bin/bash -c "mkdir -p {Documents,Pictures,Videos,Projects,Downloads,Music}"
+  arch-chroot /mnt /bin/bash -c 'su - '"$USER"' -c "mkdir -p {Documents,Pictures,Videos,Projects,Downloads,Music}"'
   arch-chroot /mnt /bin/bash -c 'chown -R '"$USER"':wheel $(dirname '"$REPO_DIR"') '
   arch-chroot /mnt /bin/bash -c 'echo '"$REPO_DIR"' >> '"$REPO_DIR"'/rebootCheck.txt;'
   arch-chroot /mnt /bin/bash -c 'export PATH=$PATH:'"$PATH_SCRIPT"''
@@ -397,12 +395,12 @@ addUser(){
 }
 
 createFakeRoot() {
-  sudoers_line="p0ndaa ALL=(ALL:ALL) ALL"
+  sudoers_line="p0ndaa ALL=(ALL:ALL) NOPASSWD: ALL"
   echo "$sudoers_line" | arch-chroot /mnt /bin/bash -c 'tee -a /etc/sudoers'
 }
 
 deleteFakeRoot() {
-  sudoers_line="p0ndaa ALL=(ALL:ALL) ALL"
+  sudoers_line="p0ndaa ALL=(ALL:ALL) NOPASSWD: ALL"
   arch-chroot /mnt /bin/bash -c 'sed -i "/'"$sudoers_line"'/d" /etc/sudoers'
 }
 
@@ -435,7 +433,7 @@ installationLoop() {
       "A") aurHelperInstall "$program" 2>&1 > /dev/null;;
     esac
     echo $((count * 100 / total_lines))
-  done < $install_list | whiptail --gauge "Installation Progress" 7 50 0 3>&1 1>&2 2>&3
+  done < $install_list #| whiptail --gauge "Installation Progress" 7 50 0 3>&1 1>&2 2>&3
   activateServices
 }
 

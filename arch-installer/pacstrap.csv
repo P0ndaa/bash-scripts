@@ -1,8 +1,10 @@
 base
+base-devel
 linux
 linux-firmware
 vim
 networkmanager
+git
 grub
 efibootmgr
 sudo
