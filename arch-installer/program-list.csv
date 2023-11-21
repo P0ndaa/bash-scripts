@@ -1,0 +1,14 @@
+P,base-devel
+P,xorg-server
+P,xorg-init
+P,xorg-apps
+P,dolphin 
+P,git
+P,fuse2
+P,fakeroot
+P,pulseaudio
+P,pulseaudio-alsa
+P,pulseaudio-bluetooth
+P,bluedevil
+A,dwm
+A,dmenu

@@ -1,4 +1,0 @@
-/dev/sda: 931,51 GiB
-/dev/sdb: 894,25 GiB
-/dev/sdc: 931,51 GiB
-/dev/nvme0n1: 465,76 GiB
