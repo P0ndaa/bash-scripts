@@ -88,9 +88,9 @@ checkEfiFileSystem() {
 }
 
 # select install disk
-# takes part list file as input
+# takes disk list file as input
 # ---
-# selectInstallDisk PART_LIST
+# selectInstallDisk DISK_LIST 
 selectInstallDisk() {
   local part_list=()
   local counter=0
@@ -115,9 +115,9 @@ selectInstallDisk() {
   INSTALL_DISK=$(whiptail --title "Select disk" --menu "Select an installation disk" 0 60 20 "${part_list[@]}" 3>&1 1>&2 2>&3 | sed "s/:.*//")
   #printf "g\nw" | fdisk $INSTALL_DISK
   parted --script $INSTALL_DISK mklabel gpt
-  if [ $(printf "p" | fdisk $INSTALL_DISK | grep "EFI" 2>&1 > /dev/null; echo $?) -eq 0 ]; then
-    EFI_PART="$(printf 'p' | fdisk $INSTALL_DISK | grep "EFI" | cut -d' ' -f1)"
-    echo $EFI_PART
+  if [ $(printf "p" | fdisk $INSTALL_DISK 2>&1 | grep "EFI" 2>&1 > /dev/null; echo $?) -eq 0 ]; then
+    EFI_PART="$(printf 'p' | fdisk $INSTALL_DISK 2>&1 | grep "EFI" | cut -d' ' -f1)"
+    #echo $EFI_PART
   fi
 }
 
@@ -153,8 +153,7 @@ wipeDisk() {
     echo "No partitions found. Skipping..."
     return 1
   fi
-  echo "we got an output"
-  sleeep 5
+
   if [ -n "$EFI_PART" ]; then
     if whiptail --title "Wipe disk" --yesno "Do you want to delete your EFI partition?\nAll the data will be lost" 0 0 3>&1 1>&2 2>&3; then
       while IFS= read -r line; do
@@ -326,11 +325,6 @@ installBasePackages() {
 installAurHelper() {
   arch-chroot /mnt /bin/bash -c 'pacman -S fakeroot --noconfirm'
   arch-chroot /mnt /bin/bash -c 'su - '"$USER"' -c "cd /home/'"$USER"' && sudo rm -rf yay && /usr/bin/git clone '"$AUR_HELPER"' && cd yay/ && sudo -u p0ndaa makepkg --syncdeps --needed --noconfirm && sudo -u p0ndaa makepkg -si PKGBUILD"'
-  #arch-chroot /mnt /bin/bash -c 'su - p0ndaa cd /home/'"$USER"' && sudo rm -rf yay'
-  #arch-chroot /mnt /bin/bash -c 'su - p0ndaa git clone '"$AUR_HELPER"''
-  #arch-chroot /mnt /bin/bash -c cd yay/
-  #arch-chroot /mnt /bin/bash -c 'sudo -u p0ndaa makepkg --syncdeps --needed --noconfirm'
-  #arch-chroot /mnt /bin/bash -c 'sudo -u p0ndaa makepkg -si PKGBUILD'
 }
 
 pacmanInstall(){
@@ -341,12 +335,17 @@ aurHelperInstall() {
   arch-chroot /mnt /bin/bash -c 'sudo -u '"$USER"' yay -S '"$1"' --noconfirm'
 }
 
+makeInstall() {
+  arch-chroot /mnt /bin/bash -c 'su - '"$USER"' -c "cd '"$REPO_DIR"' && /usr/bin/git clone '"$1"' && cd $_ && sudo -u '"$USER"' make clean install"'
+}
+
 generateFstab() {
   genfstab -U /mnt >> /mnt/etc/fstab
 }
 
 activateServices() {
   arch-chroot /mnt /bin/bash -c 'systemctl enable NetworkManager'
+  arch-chroot /mnt /bin/bash -c 'systemctl enable bluetooth'
   arch-chroot /mnt /bin/bash -c 'systemctl enable bluetooth'
 }
 
@@ -381,7 +380,7 @@ addRootPassword() {
 addUser(){
   arch-chroot /mnt /bin/bash -c 'useradd -mG wheel,audio,video '"$USER"''
   #export REPO_DIR="/home/$USER/.local/src"
-  REPO_DIR="/home/$USER/.local/src"
+  REPO_DIR="/home/$USER/.local/share"
   PATH_SCRIPT="/home/$USER/.local/bin"
   cp $0 /mnt/$REPO_DIR
   arch-chroot /mnt /bin/bash -c 'echo '"$USER"':'"$user_pass1"' | chpasswd'
@@ -389,7 +388,6 @@ addUser(){
   arch-chroot /mnt /bin/bash -c "mkdir -p '"$PATH_SCRIPT"'"
   arch-chroot /mnt /bin/bash -c 'su - '"$USER"' -c "mkdir -p {Documents,Pictures,Videos,Projects,Downloads,Music}"'
   arch-chroot /mnt /bin/bash -c 'chown -R '"$USER"':wheel $(dirname '"$REPO_DIR"') '
-  arch-chroot /mnt /bin/bash -c 'echo '"$REPO_DIR"' >> '"$REPO_DIR"'/rebootCheck.txt;'
   arch-chroot /mnt /bin/bash -c 'export PATH=$PATH:'"$PATH_SCRIPT"''
   unset user_pass1 user_pass2
 }
@@ -431,6 +429,7 @@ installationLoop() {
     case "$tag" in
       "P") pacmanInstall "$program" 2>&1 > /dev/null;;
       "A") aurHelperInstall "$program" 2>&1 > /dev/null;;
+      "M") makeInstall "$program" 2>&1 > /dev/null;;
     esac
     echo $((count * 100 / total_lines))
   done < $install_list #| whiptail --gauge "Installation Progress" 7 50 0 3>&1 1>&2 2>&3
@@ -441,41 +440,26 @@ prepareXinit() {
   arch-chroot /mnt /bin/bash -c 'echo "exec dwm" > /home/'"$USER"'/.xinitrc' 
 }
 
-afterReboot() {
-  USER=$(whoami)
-  REPO_DIR="/home/$USER/.local/src"
-  if [ -e "$REPO_DIR/rebootCheck.txt" ]; then
-    echo "Checker works!"
-    return 0
-  else
-    echo "Checker doesn't work"
-    return 1
-  fi
-}
 #
 # %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 # %%%%%........SCRIPT.......%%%%%
 # %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-if afterReboot; then
-  echo "We did it"
-else
-  loadKeymap 
-  setTimeZone || error "Timezone not selected"
-  createDisk || error "Disk not created"
-  generateHostnameAndUser|| error "Failed generating user"
-  generateRootPassword
-  installBasePackages || error "Failed installing base packages"
-  addUser || error "Failed adding user"
-  addRootPassword
-  createFakeRoot
-  generateFstab || (error "Failed generating fstab"&& exit 1)
-  chrootSettings || (error "Failed to execute commands in chroot"&& exit 1)
-  installAurHelper
-  installationLoop
-  deleteFakeRoot
-  prepareXinit
-  
-  umount -R /mnt
-fi
+loadKeymap 
+setTimeZone || error "Timezone not selected"
+createDisk || error "Disk not created"
+generateHostnameAndUser|| error "Failed generating user"
+generateRootPassword
+installBasePackages || error "Failed installing base packages"
+addUser || error "Failed adding user"
+addRootPassword
+createFakeRoot
+generateFstab || (error "Failed generating fstab"&& exit 1)
+chrootSettings || (error "Failed to execute commands in chroot"&& exit 1)
+installAurHelper
+installationLoop
+deleteFakeRoot
+prepareXinit
+
+umount -R /mnt
 # reboot
