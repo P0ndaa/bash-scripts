@@ -114,7 +114,6 @@ selectInstallDisk() {
   done < $1
   INSTALL_DISK=$(whiptail --title "Select disk" --menu "Select an installation disk" 0 60 20 "${part_list[@]}" 3>&1 1>&2 2>&3 | sed "s/:.*//")
   #printf "g\nw" | fdisk $INSTALL_DISK
-  parted --script $INSTALL_DISK mklabel gpt
   if [ $(printf "p" | fdisk $INSTALL_DISK 2>&1 | grep "EFI" 2>&1 > /dev/null; echo $?) -eq 0 ]; then
     EFI_PART="$(printf 'p' | fdisk $INSTALL_DISK 2>&1 | grep "EFI" | cut -d' ' -f1)"
     #echo $EFI_PART
@@ -146,40 +145,125 @@ wipePartition() {
 
 # wipe disk partitions
 # takes INSTALL_DISK as input
+# wipeDisk() {
+#   local partitions=()
+#   local output="$(printf "p" | fdisk "$1" 2>&1 | sed -n '/Device/,/^\s*$/p' | sed '$d; 1d' | tr -s ' ' | cut -d' ' -f1)"
+#   if [ -z "$output" ]; then
+#     echo "No partitions found. Skipping..."
+#     return 1
+#   fi
+# 
+#   if [ -n "$EFI_PART" ]; then
+#     if whiptail --title "Wipe disk" --yesno "Do you want to delete your EFI partition?\nAll the data will be lost" 0 0 3>&1 1>&2 2>&3; then
+#       while IFS= read -r line; do
+#         #wipePartitionSignature $line
+#         wipePartition $line
+#       done <<<  "$output"
+#     else
+#       while IFS= read -r line; do
+#         for partition in "${EFI_PARTS[@]}"; do
+#           if [ "$line" = "$partition" ];then
+#             EFI_PART=$partition
+#             echo "Skipping"
+#           else
+#             #wipePartitionSignature $line
+#             wipePartition $line
+#           fi
+#         done
+#       done <<<  "$output"
+#     fi
+#   else
+#     whiptail --title "Wipe disk" --msgbox "Skipping EFI wipe" 0 0 3>&1 1>&2 2>&3
+#     while IFS= read -r line; do
+#       #wipePartitionSignature $line
+#       wipePartition $line
+#     done <<<  "$output"
+#   fi
+# }
+
 wipeDisk() {
   local partitions=()
+  #local menu_items=()
   local output="$(printf "p" | fdisk "$1" 2>&1 | sed -n '/Device/,/^\s*$/p' | sed '$d; 1d' | tr -s ' ' | cut -d' ' -f1)"
   if [ -z "$output" ]; then
     echo "No partitions found. Skipping..."
     return 1
-  fi
-
-  if [ -n "$EFI_PART" ]; then
-    if whiptail --title "Wipe disk" --yesno "Do you want to delete your EFI partition?\nAll the data will be lost" 0 0 3>&1 1>&2 2>&3; then
-      while IFS= read -r line; do
-        #wipePartitionSignature $line
-        wipePartition $line
-      done <<<  "$output"
-    else
-      while IFS= read -r line; do
-        for partition in "${EFI_PARTS[@]}"; do
-          if [ "$line" = "$partition" ];then
-            EFI_PART=$partition
-            echo "Skipping"
-          else
-            #wipePartitionSignature $line
-            wipePartition $line
-          fi
-        done
-      done <<<  "$output"
-    fi
   else
-    whiptail --title "Wipe disk" --msgbox "Skipping EFI wipe" 0 0 3>&1 1>&2 2>&3
-    while IFS= read -r line; do
-      #wipePartitionSignature $line
-      wipePartition $line
-    done <<<  "$output"
-  fi
+    while read -r part; do
+      #menu_items+=("$part" "")
+      partitions+=("$part" "")
+    done <<< "$output"
+  fi 
+
+  while [ ${#partitions[@]} -gt 0 ]; do
+    local part=$(whiptail --title "Wipe Disk" --menu "Choose the partition to delete" 0 0 0 "${partitions[@]}" 3>&1 1>&2 2>&3) 
+
+    if [ $? -ne 0 ]; then
+      break
+    fi
+
+    local efi_found=false
+    for efi in ${EFI_PARTS[@]}; do
+      if [ "$part" = "$efi" ]; then
+        efi_found=true
+        if whiptail --title "Wipe Disk" --yesno "EFI partition found on this partition.\n\nAre you sure you want to proceed?" 0 0 3>&1 1>&2 2>&3; then
+          wipePartition $part
+          #partitions=("${partitions[@]/$part}")
+          for ((i=0; i<${#partitions[@]}; i++)); do
+            if [ "${partitions[i]}" = "$part" ]; then
+              # Remove the partition and the subsequent empty string
+              unset 'partitions[i]'
+              unset 'partitions[i+1]'
+              # Reindex the array
+              partitions=("${partitions[@]}")
+              break
+            fi
+          done
+          # partitions=("${partitions[@]}")
+          # output=$(printf "p" | fdisk "$1" 2>&1 | sed -n '/Device/,/^\s*$/p' | sed '$d; 1d' | tr -s ' ' | cut -d' ' -f1)
+          # partitions=()
+          # menu_items=()
+          # while read -r p; do
+          #   partitions+=("$p")
+          #   menu_items+=("$p" "")
+          # done <<< "$output"
+          #menu_items=("${menu_items[@]/$part}")
+        fi
+        break
+      fi
+    done
+
+    if [ "$efi_found" != true ]; then
+      wipePartition "$part"
+      #partitions=("${partitions[@]/$part}")
+      for ((i=0; i<${#partitions[@]}; i++)); do
+        if [ "${partitions[i]}" = "$part" ]; then
+          # Remove the partition and the subsequent empty string
+          unset 'partitions[i]'
+          unset 'partitions[i+1]'
+          # Reindex the array
+          partitions=("${partitions[@]}")
+          break
+        fi
+      done
+      #partitions=("${partitions[@]}")
+      #echo ${partitions[@]}
+      #partitions=("${partitions[@]/$part}")
+      #echo ${partitions[@]/$part}
+      #menu_items=("${menu_items[@]/$part}")
+      #output=$(printf "p" | fdisk "$1" 2>&1 | sed -n '/Device/,/^\s*$/p' | sed '$d; 1d' | tr -s ' ' | cut -d' ' -f1)
+      #partitions=()
+      #menu_items=()
+      #while read -r p; do
+      #  partitions+=("$p")
+      #  menu_items+=("$p" "")
+      #done <<< "$output"
+    fi
+
+    if [ ${#partitions[@]} -eq 0 ]; then
+      whiptail --title "Wipe Disk" --msgbox "No more partitions left. Exiting..." 8 50
+    fi
+  done
 }
 
 # swap
@@ -239,26 +323,21 @@ createDisk() {
       -a Linux (ext4) partition" 0 40
   fdisk -l | grep 'Disk /dev/.*' | grep -v 'Disk /dev/loop.*' | grep -o '.*GiB' | cut -d' ' -f2- > $part_list
 
-  if whiptail --title "Create Partition" --yesno "Do you want to check for existing EFI partitions?\
-  \nWARNING: if an EFI partition is present, rewriting it could break any other OS utilizing said partition.\
-  \n\nDo you want to continue?" 13 55 3>&1 1>&2 2>&3; then
-    while read -r part; do
-    	checkEfiFileSystem "$part" $EFI_COUNTER
-	    if [ $EFI_STATUS -eq 0 ]
-	    then
-	    	echo $EFI_PARTS
-        EFI_COUNTER=$((EFI_COUNTER + 1))
-        echo "EFI Counter: $EFI_COUNTER"
-	    else
-	    	echo "No EFI"
-	    fi
-    done < $part_list
-  else
-    whiptail --title "Create Partition" --msgbox "Skipping EFI Partition scan" 8 23 3>&1 1>&2 2>&3
-    local efi_check=0
-  fi
+  while read -r part; do
+  	checkEfiFileSystem "$part" $EFI_COUNTER
+	  if [ $EFI_STATUS -eq 0 ]
+	  then
+	  	echo $EFI_PARTS
+      EFI_COUNTER=$((EFI_COUNTER + 1))
+      echo "EFI Counter: $EFI_COUNTER"
+	  else
+	  	echo "No EFI"
+	  fi
+  done < $part_list
+
   selectInstallDisk $part_list
   wipeDisk $INSTALL_DISK
+  parted --script $INSTALL_DISK mklabel gpt
   if [ "$EFI_PART" = "" ]; then
     createEfiPartition
     createLinuxPartition
@@ -286,7 +365,8 @@ createDisk() {
 
 checkGraphics() {
   lspci | grep VGA > lspci.txt
-  vendors=("amd" "nvidia" "intel")
+  GRAPHICS_SERVICE=""
+  vendors=("amd" "nvidia" "intel" "vmware")
   for vendor in "${vendors[@]}"; do
     if [ $(cat lspci.txt | grep -i $vendor; echo $?) -eq 0 ]; then
       driver=$vendor
@@ -303,6 +383,11 @@ checkGraphics() {
   fi
   if [ "$driver" = "intel" ]; then
     echo "mesa"
+    exit 0
+  fi
+  if [ "$driver" = "vmware" ]; then
+    GRAPHICS_SERVICE="vboxservice.service"
+    echo "vboxguest"
     exit 0
   fi
   if [ "$driver" = "" ]; then
@@ -328,7 +413,7 @@ installAurHelper() {
 }
 
 pacmanInstall(){
-  arch-chroot /mnt /bin/bash -c 'pacman -S '"$1"' --noconfirm'
+  arch-chroot /mnt /bin/bash -c 'pacman -S '"$1"' --noconfirm --needed'
 }
 
 aurHelperInstall() {
@@ -346,7 +431,10 @@ generateFstab() {
 activateServices() {
   arch-chroot /mnt /bin/bash -c 'systemctl enable NetworkManager'
   arch-chroot /mnt /bin/bash -c 'systemctl enable bluetooth'
-  arch-chroot /mnt /bin/bash -c 'systemctl enable bluetooth'
+  arch-chroot /mnt /bin/bash -c 'systemctl enable sshd'
+  if [ -n "$GRAPHICS_SERVICE"]; then
+    arch-chroot /mnt /bin/bash -c 'systemctl enable '"$GRAPHICS_SERVICE"''
+  fi
 }
 
 generateHostnameAndUser(){
@@ -424,12 +512,12 @@ installationLoop() {
   curl $LINK/$install_list -o $install_list
   local total_lines=$(wc -l < "$install_list")
   local count=0
-  while IFS=, read -r tag program; do
+  while IFS=, read -r tag program link; do
     ((count++))
     case "$tag" in
       "P") pacmanInstall "$program" 2>&1 > /dev/null;;
       "A") aurHelperInstall "$program" 2>&1 > /dev/null;;
-      "M") makeInstall "$program" 2>&1 > /dev/null;;
+      "M") makeInstall "$link" "$program" 2>&1 > /dev/null;;
     esac
     echo $((count * 100 / total_lines))
   done < $install_list #| whiptail --gauge "Installation Progress" 7 50 0 3>&1 1>&2 2>&3
