@@ -12,6 +12,7 @@ EFI_STATUS=""
 EFI_SIZES=()
 EFI_SIZE=""
 EFI_COUNTER=0
+GRAPHICS_SERVICE=""
 INSTALL_DISK=""
 LINUX_PART=""
 USER=""
@@ -184,10 +185,12 @@ wipePartition() {
 wipeDisk() {
   local partitions=()
   #local menu_items=()
+  #local emptyCheck="$(printf "q" | fdisk "$1" 2>&1 | grep "Does not contain a recognized partition table" > /dev/null; echo $? )"
+  local emptyCheck="$(lsblk -o NAME,TYPE | grep 'part' > /dev/null; echo $?)"
   local output="$(printf "p" | fdisk "$1" 2>&1 | sed -n '/Device/,/^\s*$/p' | sed '$d; 1d' | tr -s ' ' | cut -d' ' -f1)"
-  if [ -z "$output" ]; then
+  if [ -z "$output" ] || [ "$emptyCheck" -ne 0 ]; then
     echo "No partitions found. Skipping..."
-    return 1
+    return 0
   else
     while read -r part; do
       #menu_items+=("$part" "")
@@ -195,14 +198,22 @@ wipeDisk() {
     done <<< "$output"
   fi 
 
-  while [ ${#partitions[@]} -gt 0 ]; do
+
+  local isEmpty=false
+  local counter=${#partitions[@]}
+  while [ $isEmpty != true ]; do
     local part=$(whiptail --title "Wipe Disk" --menu "Choose the partition to delete" 0 0 0 "${partitions[@]}" 3>&1 1>&2 2>&3) 
+    if [ $counter -eq 0 ]; then
+      whiptail --title "Wipe Disk" --msgbox "No more partitions left. Exiting..." 8 50
+      return 0
+    fi
 
     if [ $? -ne 0 ]; then
       break
     fi
 
     local efi_found=false
+    efi_confirmed=false
     for efi in ${EFI_PARTS[@]}; do
       if [ "$part" = "$efi" ]; then
         efi_found=true
@@ -216,7 +227,8 @@ wipeDisk() {
               unset 'partitions[i+1]'
               # Reindex the array
               partitions=("${partitions[@]}")
-              break
+              counter=$((counter-2))
+              #break
             fi
           done
           # partitions=("${partitions[@]}")
@@ -228,6 +240,18 @@ wipeDisk() {
           #   menu_items+=("$p" "")
           # done <<< "$output"
           #menu_items=("${menu_items[@]/$part}")
+        else
+          for ((i=0; i<${#partitions[@]}; i++)); do
+            if [ "${partitions[i]}" = "$part" ]; then
+              # Remove the partition and the subsequent empty string
+              unset 'partitions[i]'
+              unset 'partitions[i+1]'
+              # Reindex the array
+              partitions=("${partitions[@]}")
+              counter=$((counter-2))
+              #break
+            fi
+          done
         fi
         break
       fi
@@ -243,7 +267,8 @@ wipeDisk() {
           unset 'partitions[i+1]'
           # Reindex the array
           partitions=("${partitions[@]}")
-          break
+          counter=$((counter-2))
+          #break
         fi
       done
       #partitions=("${partitions[@]}")
@@ -258,10 +283,6 @@ wipeDisk() {
       #  partitions+=("$p")
       #  menu_items+=("$p" "")
       #done <<< "$output"
-    fi
-
-    if [ ${#partitions[@]} -eq 0 ]; then
-      whiptail --title "Wipe Disk" --msgbox "No more partitions left. Exiting..." 8 50
     fi
   done
 }
@@ -290,19 +311,21 @@ createEfiFileSystem() {
 
 # creates a partition with Linux filesystem
 createLinuxPartition() {
-  local output="$(printf "p" | fdisk $INSTALL_DISK 2>&1 | sed -n '/Device/,/^\s*$/p' | sed '$d; 1d' | tr -s ' ' | cut -d' ' -f1)"
+  #local output="$(printf "p" | fdisk $INSTALL_DISK 2>&1 | sed -n '/Device/,/^\s*$/p' | sed '$d; 1d' | tr -s ' ' | cut -d' ' -f1)"
+  local output="$1"
+  local efi_number="$(echo "$EFI_PART" | sed 's/[^0-9]*//g)')"
   local number=0
-  while IFS= read -r line; do
-    if [ "$line" = "$EFI_PART" ]; then
-      number=$((number + $(echo "$line" | sed 's/[^0-9]*//g') + 1))
-      #printf "n\n$number\n\n\nw" | fdisk $INSTALL_DISK
-      parted --script $INSTALL_DISK mkpart primary ext4 "$EFI_SIZE"iB 100%
-    else
-      number=2
-      #printf "n\n$number\n\n\nw" | fdisk $INSTALL_DISK
-      parted --script $INSTALL_DISK mkpart primary ext4 "$EFI_SIZE"iB 100%
-    fi
-  done <<< "$output"
+  #if [ "$line" = "$EFI_PART" ]; then
+  if [ -n "$efi_number" ]; then
+    #number=$((number + $(echo "$line" | sed 's/[^0-9]*//g') + 1))
+    number=$((efi_number+1))
+    #printf "n\n$number\n\n\nw" | fdisk $INSTALL_DISK
+    parted --script $INSTALL_DISK mkpart primary ext4 "$EFI_SIZE"iB 100%
+  else
+    number=2
+    #printf "n\n$number\n\n\nw" | fdisk $INSTALL_DISK
+    parted --script $INSTALL_DISK mkpart primary ext4 "$EFI_SIZE"iB 100%
+  fi
   LINUX_PART="$INSTALL_DISK$number"
   whiptail --title "Create Linux partition" --msgbox "Linux partition created" 8 40
   echo "Linux partition created succesfully"
@@ -338,9 +361,9 @@ createDisk() {
   selectInstallDisk $part_list
   wipeDisk $INSTALL_DISK
   parted --script $INSTALL_DISK mklabel gpt
-  if [ "$EFI_PART" = "" ]; then
+  if [ "$efi_confirmed" != true ]; then
     createEfiPartition
-    createLinuxPartition
+    createLinuxPartition "$INSTALL_DISK"
     createEfiFileSystem
     createLinuxFileSystem
   else
@@ -365,10 +388,9 @@ createDisk() {
 
 checkGraphics() {
   lspci | grep VGA > lspci.txt
-  GRAPHICS_SERVICE=""
   vendors=("amd" "nvidia" "intel" "vmware")
   for vendor in "${vendors[@]}"; do
-    if [ $(cat lspci.txt | grep -i $vendor; echo $?) -eq 0 ]; then
+    if [ $(cat lspci.txt | grep -i $vendor > /dev/null; echo $?) -eq 0 ]; then
       driver=$vendor
     fi
   done
@@ -387,7 +409,7 @@ checkGraphics() {
   fi
   if [ "$driver" = "vmware" ]; then
     GRAPHICS_SERVICE="vboxservice.service"
-    echo "vboxguest"
+    echo "virtualbox-guest-utils"
     exit 0
   fi
   if [ "$driver" = "" ]; then
@@ -399,17 +421,17 @@ installBasePackages() {
   pacstrap_list="pacstrap.csv"
   curl $LINK/$pacstrap_list -o $pacstrap_list
   driver="$(checkGraphics)"
-  if [ "$driver" != "" ]; then
-    pacstrap /mnt "$driver"
-  fi
   while read -r program; do
     pacstrap /mnt "$program"
   done < $pacstrap_list
+  if [ "$driver" != "" ]; then
+    pacstrap /mnt "$driver"
+  fi
 }
 
 installAurHelper() {
   arch-chroot /mnt /bin/bash -c 'pacman -S fakeroot --noconfirm'
-  arch-chroot /mnt /bin/bash -c 'su - '"$USER"' -c "cd /home/'"$USER"' && sudo rm -rf yay && /usr/bin/git clone '"$AUR_HELPER"' && cd yay/ && sudo -u p0ndaa makepkg --syncdeps --needed --noconfirm && sudo -u p0ndaa makepkg -si PKGBUILD"'
+  arch-chroot /mnt /bin/bash -c 'su - '"$USER"' -c "cd /home/'"$USER"' && sudo rm -rf yay && /usr/bin/git clone '"$AUR_HELPER"' && cd yay/ && sudo -u '"$USER"' makepkg --syncdeps --needed --noconfirm && sudo -u '"$USER"' makepkg -si PKGBUILD"'
 }
 
 pacmanInstall(){
@@ -421,7 +443,7 @@ aurHelperInstall() {
 }
 
 makeInstall() {
-  arch-chroot /mnt /bin/bash -c 'su - '"$USER"' -c "cd '"$REPO_DIR"' && /usr/bin/git clone '"$1"' && cd $_ && sudo -u '"$USER"' make clean install"'
+  arch-chroot /mnt /bin/bash -c 'su - '"$USER"' -c "cd '"$REPO_DIR"' && /usr/bin/git clone '"$1"' && cd '"$2"' && sudo make clean install"'
 }
 
 generateFstab() {
@@ -502,8 +524,8 @@ chrootSettings() {
    mount -t proc /proc /mnt/proc
   # mount --rbind /sys /mnt/sys
   # mount --rbind /dev /mnt/dev
-  arch-chroot /mnt grub-install --target=x86_64-efi --efi-directory=/efi --bootloader-id=GRUB $EFI_PART
-  arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg
+  arch-chroot /mnt /bin/bash -c 'grub-install --target=x86_64-efi --efi-directory=/efi --bootloader-id=GRUB'
+  arch-chroot /mnt /bin/bash -c 'grub-mkconfig -o /boot/grub/grub.cfg'
   echo "grubconfigured"
 }
 
@@ -542,8 +564,8 @@ installBasePackages || error "Failed installing base packages"
 addUser || error "Failed adding user"
 addRootPassword
 createFakeRoot
-generateFstab || (error "Failed generating fstab"&& exit 1)
-chrootSettings || (error "Failed to execute commands in chroot"&& exit 1)
+generateFstab || error "Failed generating fstab"
+chrootSettings || error "Failed to execute commands in chroot"
 installAurHelper
 installationLoop
 deleteFakeRoot
