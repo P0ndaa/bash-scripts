@@ -146,42 +146,6 @@ wipePartition() {
 
 # wipe disk partitions
 # takes INSTALL_DISK as input
-# wipeDisk() {
-#   local partitions=()
-#   local output="$(printf "p" | fdisk "$1" 2>&1 | sed -n '/Device/,/^\s*$/p' | sed '$d; 1d' | tr -s ' ' | cut -d' ' -f1)"
-#   if [ -z "$output" ]; then
-#     echo "No partitions found. Skipping..."
-#     return 1
-#   fi
-# 
-#   if [ -n "$EFI_PART" ]; then
-#     if whiptail --title "Wipe disk" --yesno "Do you want to delete your EFI partition?\nAll the data will be lost" 0 0 3>&1 1>&2 2>&3; then
-#       while IFS= read -r line; do
-#         #wipePartitionSignature $line
-#         wipePartition $line
-#       done <<<  "$output"
-#     else
-#       while IFS= read -r line; do
-#         for partition in "${EFI_PARTS[@]}"; do
-#           if [ "$line" = "$partition" ];then
-#             EFI_PART=$partition
-#             echo "Skipping"
-#           else
-#             #wipePartitionSignature $line
-#             wipePartition $line
-#           fi
-#         done
-#       done <<<  "$output"
-#     fi
-#   else
-#     whiptail --title "Wipe disk" --msgbox "Skipping EFI wipe" 0 0 3>&1 1>&2 2>&3
-#     while IFS= read -r line; do
-#       #wipePartitionSignature $line
-#       wipePartition $line
-#     done <<<  "$output"
-#   fi
-# }
-
 wipeDisk() {
   local partitions=()
   #local menu_items=()
@@ -197,7 +161,6 @@ wipeDisk() {
       partitions+=("$part" "")
     done <<< "$output"
   fi 
-
 
   local isEmpty=false
   local counter=${#partitions[@]}
@@ -219,37 +182,21 @@ wipeDisk() {
         efi_found=true
         if whiptail --title "Wipe Disk" --yesno "EFI partition found on this partition.\n\nAre you sure you want to proceed?" 0 0 3>&1 1>&2 2>&3; then
           wipePartition $part
-          #partitions=("${partitions[@]/$part}")
           for ((i=0; i<${#partitions[@]}; i++)); do
             if [ "${partitions[i]}" = "$part" ]; then
-              # Remove the partition and the subsequent empty string
               unset 'partitions[i]'
               unset 'partitions[i+1]'
-              # Reindex the array
               partitions=("${partitions[@]}")
               counter=$((counter-2))
-              #break
             fi
           done
-          # partitions=("${partitions[@]}")
-          # output=$(printf "p" | fdisk "$1" 2>&1 | sed -n '/Device/,/^\s*$/p' | sed '$d; 1d' | tr -s ' ' | cut -d' ' -f1)
-          # partitions=()
-          # menu_items=()
-          # while read -r p; do
-          #   partitions+=("$p")
-          #   menu_items+=("$p" "")
-          # done <<< "$output"
-          #menu_items=("${menu_items[@]/$part}")
         else
           for ((i=0; i<${#partitions[@]}; i++)); do
             if [ "${partitions[i]}" = "$part" ]; then
-              # Remove the partition and the subsequent empty string
               unset 'partitions[i]'
               unset 'partitions[i+1]'
-              # Reindex the array
               partitions=("${partitions[@]}")
               counter=$((counter-2))
-              #break
             fi
           done
         fi
@@ -259,36 +206,17 @@ wipeDisk() {
 
     if [ "$efi_found" != true ]; then
       wipePartition "$part"
-      #partitions=("${partitions[@]/$part}")
       for ((i=0; i<${#partitions[@]}; i++)); do
         if [ "${partitions[i]}" = "$part" ]; then
-          # Remove the partition and the subsequent empty string
           unset 'partitions[i]'
           unset 'partitions[i+1]'
-          # Reindex the array
           partitions=("${partitions[@]}")
           counter=$((counter-2))
-          #break
         fi
       done
-      #partitions=("${partitions[@]}")
-      #echo ${partitions[@]}
-      #partitions=("${partitions[@]/$part}")
-      #echo ${partitions[@]/$part}
-      #menu_items=("${menu_items[@]/$part}")
-      #output=$(printf "p" | fdisk "$1" 2>&1 | sed -n '/Device/,/^\s*$/p' | sed '$d; 1d' | tr -s ' ' | cut -d' ' -f1)
-      #partitions=()
-      #menu_items=()
-      #while read -r p; do
-      #  partitions+=("$p")
-      #  menu_items+=("$p" "")
-      #done <<< "$output"
     fi
   done
 }
-
-# swap
-# cat /proc/meminfo | grep "MemTotal" | tr -s ' ' | cut -d' ' -f2 | awk '{printf "%d\n", $1/1024}'
 
 # creates a partition for the EFI
 createEfiPartition() {
@@ -317,13 +245,10 @@ createLinuxPartition() {
   local number=0
   #if [ "$line" = "$EFI_PART" ]; then
   if [ -n "$efi_number" ]; then
-    #number=$((number + $(echo "$line" | sed 's/[^0-9]*//g') + 1))
     number=$((efi_number+1))
-    #printf "n\n$number\n\n\nw" | fdisk $INSTALL_DISK
     parted --script $INSTALL_DISK mkpart primary ext4 "$EFI_SIZE"iB 100%
   else
     number=2
-    #printf "n\n$number\n\n\nw" | fdisk $INSTALL_DISK
     parted --script $INSTALL_DISK mkpart primary ext4 "$EFI_SIZE"iB 100%
   fi
   LINUX_PART="$INSTALL_DISK$number"
@@ -542,7 +467,7 @@ installationLoop() {
       "M") makeInstall "$link" "$program" 2>&1 > /dev/null;;
     esac
     echo $((count * 100 / total_lines))
-  done < $install_list #| whiptail --gauge "Installation Progress" 7 50 0 3>&1 1>&2 2>&3
+  done < $install_list | whiptail --gauge "Installation Progress" 7 50 0 3>&1 1>&2 2>&3
   activateServices
 }
 
