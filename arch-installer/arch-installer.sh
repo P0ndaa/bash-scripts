@@ -428,12 +428,12 @@ addUser(){
 }
 
 createFakeRoot() {
-  sudoers_line="p0ndaa ALL=(ALL:ALL) NOPASSWD: ALL"
+  sudoers_line="$USER ALL=(ALL:ALL) NOPASSWD: ALL"
   echo "$sudoers_line" | arch-chroot /mnt /bin/bash -c 'tee -a /etc/sudoers'
 }
 
 deleteFakeRoot() {
-  sudoers_line="p0ndaa ALL=(ALL:ALL) NOPASSWD: ALL"
+  sudoers_line="$USER ALL=(ALL:ALL) NOPASSWD: ALL"
   arch-chroot /mnt /bin/bash -c 'sed -i "/'"$sudoers_line"'/d" /etc/sudoers'
 }
 
@@ -454,6 +454,22 @@ chrootSettings() {
   echo "grubconfigured"
 }
 
+installWM() {
+  local list=("i3" "" "awesome" "" "dwm" "")
+  if whiptail --title "Install Window Manager" --yesno "Do you want to install\na window manager?" 0 0 0 3>&1 1>&2 2>&3; then
+    wm=$(whiptail --title "Install Window Manager" --menu "Select a window manager" 0 0 0 "${list[@]}" 3>&1 1>&2 2>&3)
+  else
+    echo "Nothing choosen. Default set: 'awesome'"
+    pacmanInstall "awesome"
+  fi
+
+  if [ "$wm" == "dwm" ]; then
+    makeInstall "https://git.suckless.org/dwm" "dwm"
+  else 
+    pacmanInstall "$wm"
+  fi
+}
+
 installationLoop() {
   install_list="program-list.csv"
   curl $LINK/$install_list -o $install_list
@@ -467,12 +483,12 @@ installationLoop() {
       "M") makeInstall "$link" "$program" 2>&1 > /dev/null;;
     esac
     echo $((count * 100 / total_lines))
-  done < $install_list | whiptail --gauge "Installation Progress" 7 50 0 3>&1 1>&2 2>&3
+  done < $install_list | whiptail --gauge "Installation Progress\n\nInstalling "$program"" 7 50 0 3>&1 1>&2 2>&3
   activateServices
 }
 
 prepareXinit() {
-  arch-chroot /mnt /bin/bash -c 'echo "exec dwm" > /home/'"$USER"'/.xinitrc' 
+  arch-chroot /mnt /bin/bash -c 'echo "exec '"$wm"' " > /home/'"$USER"'/.xinitrc' 
 }
 
 #
@@ -493,6 +509,7 @@ generateFstab || error "Failed generating fstab"
 chrootSettings || error "Failed to execute commands in chroot"
 installAurHelper
 installationLoop
+installWM
 deleteFakeRoot
 prepareXinit
 
